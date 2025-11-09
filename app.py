@@ -1,51 +1,52 @@
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
-import openai
-import os
+from openai import OpenAI
 from dotenv import load_dotenv
+import os
 
-# Load environment variables from .env file
+# Load .env variables
 load_dotenv()
 
-# Initialize Flask app
 app = Flask(__name__)
 
-# Get API keys securely
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Define the route Twilio will call
+@app.route("/", methods=["GET"])
+def home():
+    return "Flask is running! Try visiting /check-key to test your API key."
+
+@app.route("/check-key", methods=["GET"])
+def check_key():
+    api_key = os.getenv("OPENAI_API_KEY")
+    if api_key:
+        return f"✅ API Key loaded successfully: {api_key[:10]}... (hidden for safety)"
+    else:
+        return "❌ No API Key found. Check your .env file and restart Flask."
+
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp_reply():
-    # Get the incoming message text
-    incoming_msg = request.values.get("Body", "").strip()
-    
-    # Initialize Twilio response object
+    incoming_msg = request.form.get("Body", "")
+    sender = request.form.get("From", "")
+    print(f"📩 Message from {sender}: {incoming_msg}")
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful WhatsApp assistant."},
+                {"role": "user", "content": incoming_msg}
+            ]
+        )
+        reply_text = response.choices[0].message.content.strip()
+
+    except Exception as e:
+        print("⚠️ Error:", e)
+        reply_text = "Sorry, I had trouble connecting to OpenAI."
+
     resp = MessagingResponse()
-    msg = resp.message()
-
-    # If a message is received
-    if incoming_msg:
-        try:
-            # Send user's message to ChatGPT
-            completion = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": incoming_msg}]
-            )
-            
-            # Extract reply text
-            reply = completion.choices[0].message["content"].strip()
-            
-            # Send reply back to user on WhatsApp
-            msg.body(reply)
-        
-        except Exception as e:
-            msg.body("⚠️ Oops! Something went wrong: " + str(e))
-    else:
-        msg.body("👋 Hey there! Send me a message to start chatting!")
-
+    resp.message(reply_text)
     return str(resp)
 
-# Run the Flask server locally (Render will handle it in deployment)
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
-
+    debug_mode = os.getenv("FLASK_DEBUG", "False").lower() == "true"
+    app.run(debug=debug_mode)
